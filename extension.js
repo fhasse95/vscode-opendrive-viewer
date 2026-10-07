@@ -38,44 +38,23 @@ function activate(context) {
 		 * 
 		 * @param {String} notificationId the notification identifier to be used
 		 * @param {String} message the message to include in the notification
-		 * @param {Boolean} cancellable flag to make it cancellable (unused)
-		 * @param {Number} maxDuration time after which operation times out
 		 */
-		notifyProgress(notificationId, message, cancellable, maxDuration) {
-			if (!cancellable) { cancellable = false; }
-			if (!maxDuration) { maxDuration = 30000; }
+		notifyProgress(notificationId, message) {
+			const notification = { resolve: null };
+			this.notifications[notificationId] = notification;
 
 			vscode.window.withProgress({
 				location: vscode.ProgressLocation.Notification,
 				title: message,
-				cancellable
+				cancellable: false
 			}, () => {
-				const promise = new Promise(resolve => {
-					let deleteRetryCounter = 0;
-
-					const intervalFunction = () => {
-						deleteRetryCounter += 500;
-						if (deleteRetryCounter >= maxDuration) {
-							this.notifications[notificationId].resolve = true;
-							this.notifyError(`Operation timeout: ${message}`);
-						}
-						if (this.notifications[notificationId]) {
-							if (this.notifications[notificationId].resolve) {
-								resolve();
-								delete this.notifications[notificationId];
-								return;
-							}
-						}
-						setTimeout(intervalFunction, 500);
+				return new Promise(resolve => {
+					notification.resolve = () => {
+						resolve();
+						delete this.notifications[notificationId];
 					};
-
-					setTimeout(intervalFunction, 500);
 				});
-				return promise;
 			});
-			this.notifications[notificationId] = {
-				resolve: false
-			};
 		}
 		/**
 		 * Resolve an existing notification
@@ -83,9 +62,7 @@ function activate(context) {
 		 * @param {String} notificationId the notification to be resolved
 		 */
 		resolveProgress(notificationId) {
-			if (this.notifications[notificationId]) {
-				this.notifications[notificationId].resolve = true;
-			}
+			this.notifications[notificationId]?.resolve?.();
 		}
 		/**
 		 * Create a notification for errors
@@ -108,23 +85,38 @@ function activate(context) {
 	 *  4. extension replies with a "payload" command to load the first map
 	 */
 	function openDriveViewerShow() {
+		const originalEditor = vscode.window.activeTextEditor;
+		if (!originalEditor || originalEditor.document.languageId !== 'OpenDRIVE') {
+			vscode.window.showErrorMessage("OpenDRIVE Viewer requires an active .xodr editor.");
+			return;
+		}
+
 		const notify = new Notifications();
 		const loadNotificationId = notify.createNotificationId();
 		notify.notifyProgress(loadNotificationId, "Loading ODRViewer application");
 		
-		const originalEditor = vscode.window.activeTextEditor;
-		const activeWorkspace = vscode.workspace;
+		const logLines = [];
 
 		const tabName = `${path.basename(originalEditor.document.fileName)} - ODRViewer`;		
 		const panel = vscode.window.createWebviewPanel('odrviewer', tabName,
 			vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true } );
 		const index = odrviewer.getWebViewIndexHtml(context);
-		panel.webview.html = index;
+		const panelSubscriptions = [];
+		let panelDisposed = false;
+		const disposePanelSubscriptions = () => {
+			if (panelDisposed) { return; }
+			panelDisposed = true;
+			for (const subscription of panelSubscriptions) {
+				subscription.dispose();
+			}
+		};
+		panelSubscriptions.push(panel.onDidDispose(disposePanelSubscriptions));
 
 		/**
 		 * Subscribing to save event in workspace
 		 */
-		activeWorkspace.onDidSaveTextDocument((document) => {
+		panelSubscriptions.push(vscode.workspace.onDidSaveTextDocument((document) => {
+			if (panelDisposed) { return; }
 			if (document.uri != originalEditor.document.uri) { return; }
 
 			const currentNotificationId = notify.createNotificationId();
@@ -134,32 +126,25 @@ function activate(context) {
 			panel.webview.postMessage({
 				command: "payload",
 				payload: documentText,
+				fileName: path.basename(document.fileName),
 				notificationId: currentNotificationId
 			});
-		})
+		}));
 
 		const onLoad = () => {
-			if (originalEditor) {
-				let document = originalEditor.document;
-				notify.resolveProgress(loadNotificationId);
+			notify.resolveProgress(loadNotificationId);
 
-				const currentNotificationId = notify.createNotificationId();
-				notify.notifyProgress(currentNotificationId, `Loading ${document.uri}`);
-				
-				const documentText = document.getText();
-				panel.webview.postMessage({
-					command: "payload",
-					payload: documentText,
-					notificationId: currentNotificationId
-				});
-			} else {
-				notify.notifyError("ODRViewer extension cannot attach to active editor");
-			}
-		};
+			const document = originalEditor.document;
+			const currentNotificationId = notify.createNotificationId();
+			notify.notifyProgress(currentNotificationId, `Loading ${document.uri}`);
 
-		const onLoadStart = (message) => {
-			// Old message, now unused
-			return;
+			const documentText = document.getText();
+			panel.webview.postMessage({
+				command: "payload",
+				payload: documentText,
+				fileName: path.basename(document.fileName),
+				notificationId: currentNotificationId
+			});
 		};
 
 		const onLoadEnd = (message) => {
@@ -169,33 +154,106 @@ function activate(context) {
 		const onError = (message) => {
 			if (message.notificationId) {
 				notify.resolveProgress(message.notificationId);
+			} else {
+				notify.resolveProgress(loadNotificationId);
 			}
 			notify.notifyError(message.message);
 		}
 
-		panel.webview.onDidReceiveMessage((message) => {
-			switch(message.command) {
-				case 'load':
-					onLoad();
-					break;
-				case 'loadStart':
-					onLoadStart(message);
-					break;
-				case 'loadEnd':
-					onLoadEnd(message);
-					break;
-				case 'error':
-					onError(message);
+		const onLog = (message) => {
+			logLines.push(`[${message.level}] ${message.message}`);
+			console.log(`[${message.level}] ${message.message}`);
+		};
+
+		const onOpenLog = async () => {
+			const document = await vscode.workspace.openTextDocument({
+				language: 'log',
+				content: logLines.join('\n')
+			});
+			await vscode.window.showTextDocument(document, {
+				viewColumn: vscode.ViewColumn.Beside,
+				preview: true
+			});
+		};
+
+		const onOpenEditor = async () => {
+			await vscode.window.showTextDocument(originalEditor.document, {
+				viewColumn: originalEditor.viewColumn,
+				preserveFocus: false
+			});
+		};
+
+		const onJumpToEditor = async (byteOffset) => {
+			if (!Number.isInteger(byteOffset) || byteOffset < 0) { return; }
+			const text = originalEditor.document.getText();
+			let utf8Offset = 0;
+			let utf16Offset = 0;
+			while (utf16Offset < text.length && utf8Offset < byteOffset) {
+				const codePoint = text.codePointAt(utf16Offset);
+				const codePointLength = codePoint > 0xffff ? 2 : 1;
+				const codePointBytes = Buffer.byteLength(String.fromCodePoint(codePoint), 'utf8');
+				if (utf8Offset + codePointBytes > byteOffset) { break; }
+				utf8Offset += codePointBytes;
+				utf16Offset += codePointLength;
 			}
-		});
+			const editor = await vscode.window.showTextDocument(originalEditor.document, {
+				viewColumn: originalEditor.viewColumn,
+				preserveFocus: false
+			});
+			const position = originalEditor.document.positionAt(utf16Offset);
+			editor.selection = new vscode.Selection(position, position);
+			editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+		};
+
+		panelSubscriptions.push(panel.webview.onDidReceiveMessage((message) => {
+			if (panelDisposed) { return; }
+			try {
+				switch(message.command) {
+					case 'load':
+						onLoad();
+						break;
+					case 'loadEnd':
+						onLoadEnd(message);
+						break;
+					case 'error':
+						onError(message);
+						break;
+					case 'log':
+						onLog(message);
+						break;
+					case 'openLog':
+						onOpenLog().catch(error => console.error(error));
+						break;
+					case 'openEditor':
+						onOpenEditor().catch(error => console.error(error));
+						break;
+					case 'jumpToEditor':
+						onJumpToEditor(message.byteOffset).catch(error => console.error(error));
+						break;
+				}
+			} catch (error) {
+				const text = error instanceof Error ? error.message : String(error);
+				console.error(`[ERROR] Webview message handling failed: ${text}`);
+				vscode.window.showErrorMessage(`OpenDRIVE Viewer message error: ${text}`);
+			}
+		}));
+
+		panel.webview.html = index;
 	};
 
-	// Registers the commend to show the OpenDRIVE viewer panel
-	const disposable = vscode.commands.registerCommand('opendrive-viewer.show', openDriveViewerShow);
+	const disposable = vscode.commands.registerCommand('opendrive-viewer.show', () => {
+		try {
+			openDriveViewerShow();
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			console.error(`[ERROR] ${message}`);
+			vscode.window.showErrorMessage(`OpenDRIVE Viewer failed to start: ${message}`);
+		}
+	});
+
 	context.subscriptions.push(disposable);
 }
 
-// This method is called when your extension is deactivated
 function deactivate() {}
 
 module.exports = {
