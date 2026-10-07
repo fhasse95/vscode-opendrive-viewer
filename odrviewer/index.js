@@ -14,13 +14,10 @@
  * limitations under the License.
  */
 const fs = require("fs");
-const vscode = require('vscode');
 
-function getWebViewIndexHtml(context) {
-  const viewerWasmFile = vscode.Uri.joinPath(context.extensionUri, 'odrviewer', "viewer.wasm.base64").fsPath;
-  const viewerWasm = fs.readFileSync(viewerWasmFile, "utf8");
-  const viewerJsFile = vscode.Uri.joinPath(context.extensionUri, 'odrviewer', "viewer.js").fsPath;
-  const viewerJs = fs.readFileSync(viewerJsFile);
+function getWebViewIndexHtml(runtimePaths) {
+  const viewerWasm = fs.readFileSync(runtimePaths.viewerWasmPath, "utf8");
+  const viewerJs = fs.readFileSync(runtimePaths.viewerJsPath);
   
   return `
 <!DOCTYPE html>

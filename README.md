@@ -16,6 +16,16 @@ The position of the camera does not change between updates of the OpenDRIVE.
 The extensions defines the language `opendrive` and provides a full set of snippets relative to the
 OpenDRIVE definition.
 
+## ODRViewer Runtime
+
+The ODRViewer runtime is not bundled with this extension. On first activation, the extension offers
+to download the current `viewer.js` and WebAssembly runtime from [odrviewer.io](https://odrviewer.io/).
+Downloaded files are stored in VS Code global extension storage. When the remote runtime changes,
+the extension offers an update.
+
+The runtime is a separate component maintained by the ODRViewer project and is subject to its own
+terms and licensing.
+
 ## Original Author
 
 Original author and copyright holder is [Sebastian Pagels](https://github.com/pageldev). 

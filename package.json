@@ -25,7 +25,6 @@
     "url": "https://odrviewer.io",
     "description": "Original application developed by Sebastian Pagels. You can donate here!"
   },
-  "activationEvents": [],
   "main": "./extension.js",
   "contributes": {
     "commands": [{
@@ -34,6 +33,10 @@
       "category": "OpenDRIVE",
       "icon": "$(open-preview)",
       "enablement": "resourceExtname == .xodr"
+    }, {
+      "command": "opendrive-viewer.downloadRuntime",
+      "title": "Download or Update ODRViewer Runtime",
+      "category": "OpenDRIVE"
     }],
     "menus": {
       "editor/title": [{

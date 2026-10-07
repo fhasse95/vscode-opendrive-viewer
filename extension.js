@@ -1,11 +1,53 @@
 const vscode = require('vscode');
 const odrviewer = require("./odrviewer");
+const { RuntimeManager } = require("./odrviewer/runtime");
 const path = require('path');
 
 /**
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
+	const runtimeManager = new RuntimeManager(context);
+	const runtimeCommand = 'opendrive-viewer.downloadRuntime';
+
+	async function downloadRuntime() {
+		try {
+			await vscode.window.withProgress({
+				location: vscode.ProgressLocation.Notification,
+				title: "Downloading ODRViewer runtime",
+				cancellable: false
+			}, () => runtimeManager.download());
+			vscode.window.showInformationMessage("ODRViewer runtime is ready.");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			vscode.window.showErrorMessage(`ODRViewer runtime download failed: ${message}`);
+		}
+	}
+
+	async function checkRuntime() {
+		try {
+			const result = await runtimeManager.checkForUpdate();
+			if (result.status === "missing") {
+				const choice = await vscode.window.showInformationMessage(
+					"ODRViewer runtime is not installed.",
+					"Download ODRViewer Runtime"
+				);
+				if (choice === "Download ODRViewer Runtime") { await downloadRuntime(); }
+			} else if (result.status === "update") {
+				const choice = await vscode.window.showInformationMessage(
+					"A newer ODRViewer runtime is available.",
+					"Update ODRViewer Runtime"
+				);
+				if (choice === "Update ODRViewer Runtime") { await downloadRuntime(); }
+			}
+		} catch {
+			// Runtime checks are best effort when the website is unavailable.
+		}
+	}
+
+	const runtimeDisposable = vscode.commands.registerCommand(runtimeCommand, checkRuntime);
+	context.subscriptions.push(runtimeDisposable);
+
 	/**
 	 * Notification utility class to handle promises of progress from the 
 	 * WebView side. The progress is marked with a "unique identification"
@@ -85,6 +127,17 @@ function activate(context) {
 	 *  4. extension replies with a "payload" command to load the first map
 	 */
 	function openDriveViewerShow() {
+		if (!runtimeManager.isInstalled()) {
+			vscode.window.showInformationMessage(
+				"ODRViewer runtime is not installed.",
+				"Download ODRViewer Runtime"
+			).then(choice => {
+				if (choice === "Download ODRViewer Runtime") { return downloadRuntime(); }
+				return undefined;
+			});
+			return;
+		}
+
 		const originalEditor = vscode.window.activeTextEditor;
 		if (!originalEditor || originalEditor.document.languageId !== 'OpenDRIVE') {
 			vscode.window.showErrorMessage("OpenDRIVE Viewer requires an active .xodr editor.");
@@ -100,7 +153,7 @@ function activate(context) {
 		const tabName = `${path.basename(originalEditor.document.fileName)} - ODRViewer`;		
 		const panel = vscode.window.createWebviewPanel('odrviewer', tabName,
 			vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true } );
-		const index = odrviewer.getWebViewIndexHtml(context);
+		const index = odrviewer.getWebViewIndexHtml(runtimeManager.getPaths());
 		const panelSubscriptions = [];
 		let panelDisposed = false;
 		const disposePanelSubscriptions = () => {
