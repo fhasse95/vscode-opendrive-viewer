@@ -128,12 +128,15 @@ function activate(context) {
 	 */
 	function openDriveViewerShow() {
 		if (!runtimeManager.isInstalled()) {
-			vscode.window.showInformationMessage(
+			void vscode.window.showInformationMessage(
 				"ODRViewer runtime is not installed.",
 				"Download ODRViewer Runtime"
 			).then(choice => {
 				if (choice === "Download ODRViewer Runtime") { return downloadRuntime(); }
 				return undefined;
+			}).catch(error => {
+				const message = error instanceof Error ? error.message : String(error);
+				vscode.window.showErrorMessage(`ODRViewer runtime setup failed: ${message}`);
 			});
 			return;
 		}

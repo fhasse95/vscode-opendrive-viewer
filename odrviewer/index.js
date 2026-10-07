@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 const fs = require("fs");
+const crypto = require("crypto");
 
 function getWebViewIndexHtml(runtimePaths) {
+  const nonce = crypto.randomBytes(16).toString("base64");
   const viewerWasm = fs.readFileSync(runtimePaths.viewerWasmPath, "utf8");
   const viewerJs = fs.readFileSync(runtimePaths.viewerJsPath);
   
@@ -24,6 +26,7 @@ function getWebViewIndexHtml(runtimePaths) {
 <html lang="en">
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'unsafe-inline';">
   <style>
     html, body {
       width: 100%;
@@ -42,8 +45,8 @@ function getWebViewIndexHtml(runtimePaths) {
   </style>
 </head>
 <body>
-  <canvas id="canvas" class="fullscreen" oncontextmenu="event.preventDefault()"></canvas>
-  <script>
+  <canvas id="canvas" class="fullscreen"></canvas>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     window.addEventListener("error", event => {
       const error = event.error || event.message;
@@ -97,6 +100,9 @@ function getWebViewIndexHtml(runtimePaths) {
     const offer_file_as_download = offer_fs_file_as_download;
 
     const canvas = document.getElementById("canvas");
+    canvas.addEventListener("contextmenu", event => {
+      event.preventDefault();
+    });
     
     let OpenDriveViewer = null;
     let ModuleOdrViewer = null;
